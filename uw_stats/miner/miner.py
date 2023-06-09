@@ -139,6 +139,6 @@ def save_page(html: str, working_dir: Path, page_num: int = 1) -> int:
         int: The amount of bytes written.
     """
     assert working_dir.is_dir(), "path arg must be a directory."
-    file_path = working_dir / f"page_{page_num}.html"
+    file_path = working_dir / f"page_{str(page_num).zfill(4)}.html"
     with open(file_path, mode="w", encoding="utf-8") as fp:
         return fp.write(html)

@@ -45,6 +45,7 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
     """
     df = pd.DataFrame(
         columns=(
+            "raw",
             "author",
             "content",
             "like_count",
@@ -56,29 +57,54 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
             "word_count",
             "emoji_count",
             "emoji_frequency_mapping",
-            "raw",
-            )
         )
+    )
 
-    for file in Path(path).iterdir():
+    for file in sorted(
+        Path(path).iterdir(), key=lambda s: re.findall(r"\d+", s.name)[0]
+    ):
         if file.is_dir():
             continue
+        print("Processing", file)
         soup = bs4.BeautifulSoup(file.read_text("utf-8"))
+        import time
 
         for message in find_all_messages(soup):
+            start = time.time()
+            raw = str(message)
             author = message["data-author"]
             content = find_message_content(message)
             insert_dot_before_last_emoji(content)
             like_count = get_amount_of_likes(message)
             quote_count = get_amount_of_quotes(message)
-            quotes_list = get_list_of_quoted_usernames(message)
+            quoted_list = get_list_of_quoted_usernames(message)
             spoiler_count = get_amount_of_spoilers(message)
             mentioned_list = get_list_of_mentioned_usernames(message)
-            mentioned_count = len(mentioned_list)
+            mentions_count = len(mentioned_list)
             word_count = get_amount_of_words(message)
             emoji_frequency_mapping = (
                 get_mapping_of_emojis_and_frequency(message))
             emoji_count = len(emoji_frequency_mapping)
+            message_series = pd.Series(
+                data=(
+                    raw,
+                    author,
+                    content,
+                    like_count,
+                    quote_count,
+                    quoted_list,
+                    spoiler_count,
+                    mentions_count,
+                    mentioned_list,
+                    word_count,
+                    emoji_count,
+                    emoji_frequency_mapping,
+                )
+            )
+            df = pd.concat([df, message_series])
+            print(time.time() - start)
+
+    return df
 
 
 def get_amount_of_likes(message: bs4.element.Tag) -> int:
@@ -105,10 +131,16 @@ def get_amount_of_likes(message: bs4.element.Tag) -> int:
         return num_likes
 
     for bdi in likes_bar("bdi"):
+        # Remove usernames
         bdi.decompose()
 
     text = likes_bar.get_text(strip=True)
-    return int(re.findall(r"\d+", text)[0])
+    try:
+        # Return additional likes plus the ones being counted
+        return int(re.findall(r"\d+", text)[0]) + num_likes
+    except IndexError:
+        # There are just 3 likes
+        return num_likes
 
 
 def insert_dot_before_last_emoji(
