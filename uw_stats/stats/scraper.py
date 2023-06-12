@@ -2,6 +2,15 @@ import bs4
 import pandas as pd
 from pathlib import Path
 import re
+import sys
+import copy
+from typing import Optional
+import string
+import dateparser
+import datetime as dt
+
+# bs4 seems to recursively parse the html. Errors sometimes.
+sys.setrecursionlimit(10_000)
 
 
 # Parts of this code are inspired or copied from
@@ -30,10 +39,10 @@ def find_message_content(message: bs4.element.Tag) -> bs4.element.Tag:
     Returns:
         bs4.element.Tag: The message content's element tag object.
     """
-    return message.find("article", class_="message-body")
+    return message.find("div", class_="message-content")
 
 
-def construct_dataframe(path: str | Path) -> pd.DataFrame:
+def construct_dataframe(path: str | Path, range) -> pd.DataFrame:
     """Constructs a dataframe pagewise from HTML files.
     This could eventually be split up into multiple functions or a class.
 
@@ -43,67 +52,113 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
     Returns:
         pd.DataFrame: The newly created dataframe.
     """
-    df = pd.DataFrame(
-        columns=(
-            "raw",
-            "author",
-            "content",
-            "like_count",
-            "quote_count",
-            "quoted_list",
-            "spoiler_count",
-            "mentions_count",
-            "mentioned_list",
-            "word_count",
-            "emoji_count",
-            "emoji_frequency_mapping",
-        )
-    )
+    columns = [
+        "raw",
+        "author",
+        "creation_datetime",
+        "content",
+        "like_count",
+        "quote_count",
+        "quoted_list",
+        "spoiler_count",
+        "mentions_count",
+        "mentioned_list",
+        "word_count",
+        "emoji_count",
+        "emoji_frequency_mapping",
+        "is_edited",
+        "is_rules_compliant",
+        "rulebreak_reasons",
+        "page_num",
+    ]
 
+    series_list = []
     for file in sorted(
         Path(path).iterdir(), key=lambda s: re.findall(r"\d+", s.name)[0]
     ):
         if file.is_dir():
             continue
+        page_num = int(re.findall(r"\d+", file.name)[0])
         print("Processing", file)
         soup = bs4.BeautifulSoup(file.read_text("utf-8"))
-        import time
 
         for message in find_all_messages(soup):
-            start = time.time()
-            raw = str(message)
-            author = message["data-author"]
-            content = find_message_content(message)
-            insert_dot_before_last_emoji(content)
-            like_count = get_amount_of_likes(message)
-            quote_count = get_amount_of_quotes(message)
-            quoted_list = get_list_of_quoted_usernames(message)
-            spoiler_count = get_amount_of_spoilers(message)
-            mentioned_list = get_list_of_mentioned_usernames(message)
+            # Some data-gathering functions need access to otherwise
+            # noisy tags.
+            # Every function tries to access the unmodified message by
+            # default, unless it needs to work with content text or raw
+            # HTML. Or needs to modify the message.
+            unmodified_message = copy.copy(message)
+            content_tag = find_message_content(message)  # Can be modified
+
+            raw = str(unmodified_message).strip()
+            author = unmodified_message["data-author"]
+            creation_datetime = get_message_creation_time(unmodified_message)
+            is_edited = has_edited_message(unmodified_message)
+
+            quote_count = get_amount_of_quotes(unmodified_message)
+            quoted_list = get_list_of_quoted_usernames(unmodified_message)
+
+            spoiler_count = get_amount_of_spoilers(unmodified_message)
+
+            mentioned_list = get_list_of_mentioned_usernames(
+                unmodified_message
+            )
             mentions_count = len(mentioned_list)
-            word_count = get_amount_of_words(message)
+
+            # Must come before insert_dot_after_last_emoji()
             emoji_frequency_mapping = (
-                get_mapping_of_emojis_and_frequency(message))
-            emoji_count = len(emoji_frequency_mapping)
+                get_mapping_of_emojis_and_frequency(unmodified_message)
+            )
+            emoji_count = sum(i for i in emoji_frequency_mapping.values())
+
+            like_count = get_amount_of_likes(message)  # modifies
+
+            clean_noisy_tags(message)  # modifies
+
+            insert_dot_after_last_emoji(content_tag)  # modifies
+
+            content = content_tag.get_text(strip=True)  # needs modified
+
+            word_count = get_amount_of_words(content_tag)
+
+            rules_compliance_check_result = check_rules_compliance(
+                content, word_count
+            )
+            is_rules_compliant = rules_compliance_check_result[0]
+            rulebreak_reasons = rules_compliance_check_result[1]
+
             message_series = pd.Series(
                 data=(
-                    raw,
-                    author,
-                    content,
-                    like_count,
-                    quote_count,
-                    quoted_list,
-                    spoiler_count,
-                    mentions_count,
-                    mentioned_list,
-                    word_count,
-                    emoji_count,
-                    emoji_frequency_mapping,
-                )
+                    [
+                        raw,
+                        author,
+                        creation_datetime,
+                        content,
+                        like_count,
+                        quote_count,
+                        quoted_list,
+                        spoiler_count,
+                        mentions_count,
+                        mentioned_list,
+                        word_count,
+                        emoji_count,
+                        emoji_frequency_mapping,
+                        is_edited,
+                        is_rules_compliant,
+                        rulebreak_reasons,
+                        page_num,
+                    ]
+                ),
+                index=columns,
             )
-            df = pd.concat([df, message_series])
-            print(time.time() - start)
+            series_list.append(message_series)
 
+    df = pd.DataFrame(
+        series_list,
+        columns=columns,
+        copy=False,
+    )
     return df
 
 
@@ -143,7 +198,47 @@ def get_amount_of_likes(message: bs4.element.Tag) -> int:
         return num_likes
 
 
-def insert_dot_before_last_emoji(
+def clean_noisy_tags(message: bs4.element.Tag) -> None:
+    """Decomposes various hard-coded noisy Tags.
+
+    Args:
+        message (bs4.element.Tag): The message's element tag object.
+    """
+    # Turn emojis into their alt
+    for emoji in message.find_all("img", class_="smilie"):
+        try:
+            alt = emoji["alt"]
+            emoji.insert_before(alt)
+            emoji.decompose()
+        except TypeError:
+            # Rare error of a corrupted image tag (?)
+            # Just ignoring, it's all @fscript's fault.
+            pass
+
+    # Media Tags have a noisy "Ansehen auf" string.
+    for p in message.find_all("p"):
+        if p.get_text(strip=True) == "Ansehen auf":
+            p.decompose()
+
+    # Tags whose content shouldn't be in the message content.
+    # List of tuples. First tuple element is the tag string, second
+    # an optional class.
+    useless_tags: list[tuple[str, Optional[str]]] = [
+        ("script", None),
+        ("table", None),
+        ("blockquote", None),
+        ("div", "message-lastEdit")
+    ]
+    for tag, class_ in useless_tags:
+        if class_:
+            all_tags = message.find_all(tag, class_=class_)
+        else:
+            all_tags = message.find_all(tag)
+        for find in all_tags:
+            find.decompose()
+
+
+def insert_dot_after_last_emoji(
     soup: bs4.BeautifulSoup | bs4.element.Tag
 ) -> None:
     """Inserts a dot before the messages last emoji to let
@@ -154,7 +249,7 @@ def insert_dot_before_last_emoji(
         soup or element tag object.
     """
     try:
-        soup.find_all(class_="smilie")[-1].insert_before(".")
+        soup.find_all(class_="smilie")[-1].insert_after(".")
     except IndexError:
         pass  # no emojis in soup
 
@@ -213,20 +308,21 @@ def get_list_of_mentioned_usernames(message: bs4.element.Tag) -> list[str]:
         if (uname := mention.get_text(strip=True))[0] == "@":
             # There can also be other anchor tags with that class.
             # However, only mentions start with @.
+            # Perf. note: str[0]=="@" performs almost 3 times faster than
+            # str.startswith("@").
             usernames.append(uname[1:])
     return usernames
 
 
-def get_amount_of_words(message: bs4.element.Tag) -> int:
+def get_amount_of_words(content: bs4.element.Tag) -> int:
     """Retrieves the amount of words in a message.
 
     Args:
-        message (bs4.element.Tag): The message's element tag object.
+        content (bs4.element.Tag): The message content's element tag object.
 
     Returns:
         int: The word count.
     """
-    content = find_message_content(message)
     return _count_words(content.get_text(strip=True))
 
 
@@ -263,3 +359,74 @@ def _count_words(string: str) -> int:
         int: The amount of words in the string.
     """
     return len(string.split())
+
+
+def has_edited_message(message: bs4.element.Tag) -> bool:
+    """Check if the message has been edited at least once.
+
+    Args:
+        message (bs4.element.Tag): The message's element tag object.
+
+    Returns:
+        bool: Wether or not the message has been edited.
+    """
+    if message.find("div", class_="message-lastEdit"):
+        return True
+    return False
+
+
+def check_rules_compliance(
+    content: str, word_count_: int
+) -> tuple[bool, list[Optional[str]]]:
+    """Checks if a post is compliant to the rules.
+
+    Args:
+        content (str): The cleaned up and stripped content string.
+        word_count (int): The word count.
+
+    Returns:
+        tuple[bool, list[Optional[str], ...]]: A tuple with the first
+        element being the check result and the second one being a list
+        with the reasons (str) in case it's not compliant. Reasons can
+        be "word_count", "first_letter" or "punctuation".
+    """
+    # Rules:
+    # - At least 5 words (word_count)
+    # - First letter must be capitalized (first_letter)
+    # - Trailing punctuation (punctuation)
+    compliance = {
+        "word_count": True,
+        "first_letter": True,
+        "punctuation": True,
+    }
+
+    if word_count_ < 5:
+        compliance["word_count"] = False
+    try:
+        if content[0].upper() != content[0]:
+            compliance["first_letter"] = False
+        if content[-1] not in string.punctuation:
+            compliance["punctuation"] = False
+    except IndexError:
+        # Content is empty. Example: https://uwmc.de/p108813
+        compliance["first_letter"] = False
+        compliance["punctuation"] = False
+
+    broken_rules: list[Optional[str]] = [
+        key for key, value in compliance.items() if not value
+    ]
+    return (not any(broken_rules), broken_rules)
+
+
+def get_message_creation_time(message: bs4.element.Tag) -> dt.datetime:
+    """Retrieves a messages creation date.
+
+    Args:
+        message (bs4.element.Tag): The message's element tag.
+
+    Returns:
+        datetime.datetime: A datetime.datetime object representing the
+        message's creation date.
+    """
+    iso_string = message.find_all("time", class_="u-dt")[0]["datetime"]
+    return dateparser.parse(iso_string)  # type: ignore
