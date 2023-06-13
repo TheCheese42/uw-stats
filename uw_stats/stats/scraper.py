@@ -42,7 +42,7 @@ def find_message_content(message: bs4.element.Tag) -> bs4.element.Tag:
     return message.find("div", class_="message-content")
 
 
-def construct_dataframe(path: str | Path, range) -> pd.DataFrame:
+def construct_dataframe(path: str | Path) -> pd.DataFrame:
     """Constructs a dataframe pagewise from HTML files.
     This could eventually be split up into multiple functions or a class.
 
@@ -115,8 +115,6 @@ def construct_dataframe(path: str | Path, range) -> pd.DataFrame:
             like_count = get_amount_of_likes(message)  # modifies
 
             clean_noisy_tags(message)  # modifies
-
-            insert_dot_after_last_emoji(content_tag)  # modifies
 
             content = content_tag.get_text(strip=True)  # needs modified
 
@@ -207,10 +205,11 @@ def clean_noisy_tags(message: bs4.element.Tag) -> None:
     # Turn emojis into their alt
     for emoji in message.find_all("img", class_="smilie"):
         try:
+            emoji.insert_after(".")  # Use emojis as Sentence delimiter
             alt = emoji["alt"]
             emoji.insert_before(alt)
             emoji.decompose()
-        except TypeError:
+        except (TypeError, ValueError):
             # Rare error of a corrupted image tag (?)
             # Just ignoring, it's all @fscript's fault.
             pass
@@ -236,22 +235,6 @@ def clean_noisy_tags(message: bs4.element.Tag) -> None:
             all_tags = message.find_all(tag)
         for find in all_tags:
             find.decompose()
-
-
-def insert_dot_after_last_emoji(
-    soup: bs4.BeautifulSoup | bs4.element.Tag
-) -> None:
-    """Inserts a dot before the messages last emoji to let
-    them count as punctuation.
-
-    Args:
-        soup (bs4.BeautifulSoup | bs4.element.Tag): The message's
-        soup or element tag object.
-    """
-    try:
-        soup.find_all(class_="smilie")[-1].insert_after(".")
-    except IndexError:
-        pass  # no emojis in soup
 
 
 def get_amount_of_quotes(message: bs4.element.Tag) -> int:
@@ -347,7 +330,7 @@ def get_mapping_of_emojis_and_frequency(
     return emojis
 
 
-def _count_words(string: str) -> int:
+def _count_words(string_: str) -> int:
     """Counts the amount of words in a string by utilizing the
     str.split() method. Splits on any whitespace character and
     discards empty strings.
@@ -358,7 +341,7 @@ def _count_words(string: str) -> int:
     Returns:
         int: The amount of words in the string.
     """
-    return len(string.split())
+    return len(re.split(rf"[\s{string.punctuation}]", string_))
 
 
 def has_edited_message(message: bs4.element.Tag) -> bool:
@@ -399,6 +382,17 @@ def check_rules_compliance(
         "first_letter": True,
         "punctuation": True,
     }
+    # This needs to be done better... Needs a more comprehensive database.
+    punctuational_textual_emotes_and_symbols: list[str] = [
+        "-",
+        "xD",
+        "x.x",
+        ":c",
+        "o7",
+        ":3",
+        "q.q",
+        ":0",
+    ]
 
     if word_count_ < 5:
         compliance["word_count"] = False
@@ -406,7 +400,11 @@ def check_rules_compliance(
         if content[0].upper() != content[0]:
             compliance["first_letter"] = False
         if content[-1] not in string.punctuation:
-            compliance["punctuation"] = False
+            for i in punctuational_textual_emotes_and_symbols:
+                if content.endswith(i):
+                    break
+            else:
+                compliance["punctuation"] = False
     except IndexError:
         # Content is empty. Example: https://uwmc.de/p108813
         compliance["first_letter"] = False
