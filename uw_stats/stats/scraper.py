@@ -1,3 +1,7 @@
+# Parts of this code are inspired by or copied from
+# https://github.com/ifscript/lootscript.
+# This notice is also found at the top of affected functions.
+
 import bs4
 import pandas as pd
 from pathlib import Path
@@ -8,14 +12,46 @@ from typing import Optional
 import string
 import dateparser
 import datetime as dt
+import math
 
 # bs4 seems to recursively parse the html. Errors sometimes.
 sys.setrecursionlimit(10_000)
 
 
-# Parts of this code are inspired or copied from
-# https://github.com/ifscript/lootscript.
-# This notice is also found at the top of affected functions.
+def get_page_for_message(post_num: int) -> int:
+    """Finds the page a given post should be in.
+
+    Args:
+        post_num (int): The post number.
+
+    Returns:
+        int: The page number.
+    """
+    return math.ceil(post_num / 20)
+
+
+def get_first_post_from_page(page_num: int) -> int:
+    """Returns the first post number on a given page.
+
+    Args:
+        page_num (int): The page number.
+
+    Returns:
+        int: The first post number.
+    """
+    return page_num * 20 - 19
+
+
+def get_last_post_from_page(page_num: int) -> int:
+    """Returns the last post number on a given page.
+
+    Args:
+        page_num (int): The page number.
+
+    Returns:
+        int: The last post number.
+    """
+    return page_num * 20
 
 
 def find_all_messages(soup: bs4.BeautifulSoup) -> list[bs4.element.Tag]:
@@ -42,18 +78,32 @@ def find_message_content(message: bs4.element.Tag) -> bs4.element.Tag:
     return message.find("div", class_="message-content")
 
 
-def construct_dataframe(path: str | Path) -> pd.DataFrame:
+def construct_dataframe(
+    path: str | Path,
+    pagerange: Optional[range] = None,
+    postrange: Optional[range] = None,
+) -> pd.DataFrame:
     """Constructs a dataframe pagewise from HTML files.
     This could eventually be split up into multiple functions or a class.
+    Use the *range parameters to specify what pages to be included in the
+    output. Second range argument is exclusive.
 
     Args:
         path (str | Path): The path containing the HTML files.
+        pagerange (range, optional): The pagerange to include in the table.
+        Mutually exclusive with other ranges. Defaults to None.
+        postrange (range, optional): The postrange to include in the table.
+        Mutually exclusive with other ranges. Defaults to None.
 
     Returns:
         pd.DataFrame: The newly created dataframe.
     """
+    if all([pagerange, postrange]):
+        raise ValueError("Only one *range parameter can be given.")
+
     columns = [
-        "raw",
+        "post_num",
+        "page_num",
         "author",
         "creation_datetime",
         "content",
@@ -69,7 +119,6 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
         "is_edited",
         "is_rules_compliant",
         "rulebreak_reasons",
-        "page_num",
     ]
 
     series_list = []
@@ -79,10 +128,28 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
         if file.is_dir():
             continue
         page_num = int(re.findall(r"\d+", file.name)[0])
+
+        # range checks
+        if pagerange:
+            if page_num not in pagerange:
+                continue
+        if postrange:
+            if (
+                get_first_post_from_page(page_num) not in postrange and
+                get_last_post_from_page(page_num) not in postrange
+            ):
+                continue
+
         print("Processing", file)
-        soup = bs4.BeautifulSoup(file.read_text("utf-8"))
+        soup = bs4.BeautifulSoup(
+            file.read_text("utf-8"), features="html.parser"
+        )
 
         for message in find_all_messages(soup):
+            post_num = get_post_num(message)
+            if postrange:
+                if post_num not in postrange:
+                    continue
             # Some data-gathering functions need access to otherwise
             # noisy tags.
             # Every function tries to access the unmodified message by
@@ -91,7 +158,6 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
             unmodified_message = copy.copy(message)
             content_tag = find_message_content(message)  # Can be modified
 
-            raw = str(unmodified_message).strip()
             author = unmodified_message["data-author"]
             creation_datetime = get_message_creation_time(unmodified_message)
             is_edited = has_edited_message(unmodified_message)
@@ -129,7 +195,8 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
             message_series = pd.Series(
                 data=(
                     [
-                        raw,
+                        post_num,
+                        page_num,
                         author,
                         creation_datetime,
                         content,
@@ -145,26 +212,54 @@ def construct_dataframe(path: str | Path) -> pd.DataFrame:
                         is_edited,
                         is_rules_compliant,
                         rulebreak_reasons,
-                        page_num,
                     ]
                 ),
                 index=columns,
             )
             series_list.append(message_series)
 
+    if pagerange:
+        index = range(
+            get_first_post_from_page(pagerange[0]),
+            # +1 due to the range stop value being exclusive
+            get_last_post_from_page(pagerange[-1]) + 1,
+        )
+    elif postrange:
+        index = range(
+            postrange[0],
+            # +1 due to the range stop value being exclusive
+            postrange[-1] + 1,
+        )
+    else:
+        index = None
+
     df = pd.DataFrame(
         series_list,
+        index=index,
         columns=columns,
         copy=False,
     )
     return df
 
 
+def get_post_num(message: bs4.element.Tag) -> int:
+    """Get the post number of a message.
+
+    Args:
+        message (bs4.element.Tag): The message's element tag object.
+
+    Returns:
+        int: The post number.
+    """
+    postnum_str = message.find_all("li")[3].get_text(strip=True)[1:]
+    return int(postnum_str.replace(".", ""))
+
+
 def get_amount_of_likes(message: bs4.element.Tag) -> int:
     """Get the amount of likes a message has.
 
     Args:
-        message (bs4.element.Tag): The messages element tag object.
+        message (bs4.element.Tag): The message's element tag object.
 
     Returns:
         int: The like count.
