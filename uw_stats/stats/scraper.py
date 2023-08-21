@@ -492,7 +492,10 @@ def check_rules_compliance(
     if word_count_ < 5:
         compliance["word_count"] = False
     try:
-        if content[0].upper() != content[0]:
+        first_letter_index = _find_first_letter_index(content)
+        if first_letter_index is None:  # No letter in msg
+            compliance["first_letter"] = False
+        elif not content[first_letter_index].isupper():
             compliance["first_letter"] = False
         if content[-1] not in string.punctuation:
             for i in punctuational_textual_emotes_and_symbols:
@@ -523,3 +526,10 @@ def get_message_creation_time(message: bs4.element.Tag) -> dt.datetime:
     """
     iso_string = message.find_all("time", class_="u-dt")[0]["datetime"]
     return dateparser.parse(iso_string)  # type: ignore
+
+
+def _find_first_letter_index(string_: str):
+    for char in string_:
+        if char in string.ascii_letters:
+            return string_.index(char)
+    return None

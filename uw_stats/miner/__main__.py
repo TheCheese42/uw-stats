@@ -24,7 +24,7 @@ if __name__ == "__main__":
         "-p",
         "--path",
         action="store",
-        default=Path.cwd() / "html_content",
+        default=Path.cwd() / ".html_content",
         type=Path,
         required=False,
         help="Path to where the HTML files are saved.",
@@ -93,7 +93,7 @@ if __name__ == "__main__":
             )
     except KeyboardInterrupt:
         print("Cancelled due to KeyboardInterrupt.")
-        sys.exit()
+        sys.exit(1)
 
     print(
         f"Fetched and saved {miner.get_last_page(args.url)} pages into "

@@ -86,6 +86,26 @@ class DataExtractor:
         }
         return list(authors_to_messages.keys())
 
+    def get_author_sorted_by_rule_violations_percentage(self) -> list[str]:
+        authors = self.get_authors()
+        authors_to_rule_violations_percentage = {}
+        for author in authors:
+            posts = self.get_messages_from_author(author)
+            rule_violations = (
+                self.get_rule_violating_messages_from_author(author)
+            )
+            authors_to_rule_violations_percentage[author] = (
+                rule_violations / posts
+            )
+        authors_to_rule_violations_percentage = {
+            k: v for k, v in sorted(
+                authors_to_rule_violations_percentage.items(),
+                key=lambda item: item[1],
+                reverse=False,
+            )
+        }
+        return list(authors_to_rule_violations_percentage.keys())
+
 
 class DataVisualizer:
     """A class providing various methods used to visualize
@@ -94,8 +114,10 @@ class DataVisualizer:
     def __init__(self, data_extractor: DataExtractor) -> None:
         self.data_extractor = data_extractor
 
-    def maua1_style_mdtable(self):
-        """Constructs a BBCode Table with the authors as Y-axis and the columns
+    def maua1_style_bbtable(self) -> str:
+        """
+        <printable>
+        Constructs a BBCode Table with the authors as Y-axis and the columns
         as X-axis. For an example see https://uwmc.de/p370063.
 
         Args:
@@ -111,6 +133,47 @@ class DataVisualizer:
         authors_sorted = self.data_extractor.get_authors_sorted_by_messages()
         for author in authors_sorted:
             messages = self.data_extractor.get_messages_from_author(author)
+            rules_violating_messages = (
+                self.data_extractor.get_rule_violating_messages_from_author(
+                    author
+                )
+            )
+            percentage_rules_violating_messages = (
+                rules_violating_messages / messages
+            )
+            table += f"\
+                [TR][TD]{author}[/TD]\
+                [TD]{messages}[/TD]\
+                [TD]{rules_violating_messages}[/TD]\
+                [TD]{percentage_rules_violating_messages * 100}%[/TD][/TR]"
+        table += "[/TABLE]"
+        table = table.replace("  ", "")
+        table = table.strip()
+        return table
+
+    def rule_violation_bbtable_50p(self) -> str:
+        """
+        <printable>
+        Constructs a BBCode Table containing stats per author, sorted by
+        rule violation percentage ascending. Only counts authors with at
+        least 50 messages in the specified range.
+
+        Args:
+
+        Returns:
+            str: The table using BBCode syntax.
+        """
+        table = "\
+            [TABLE=full][TR][TD]Spieler[/TD][TD]Anzahl Beiträge[/TD]\
+            [TD]Anzahl nicht regelkonformer Beiträge[/TD]\
+            [TD]Prozentanzahl nicht regelkonformer Beiträge[/TD][/TR]"
+        authors_sorted = (
+            self.data_extractor.get_author_sorted_by_rule_violations_percentage
+        )()
+        for author in authors_sorted:
+            messages = self.data_extractor.get_messages_from_author(author)
+            if messages < 50:
+                continue
             rules_violating_messages = (
                 self.data_extractor.get_rule_violating_messages_from_author(
                     author
