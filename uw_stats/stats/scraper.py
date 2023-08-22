@@ -2,17 +2,19 @@
 # https://github.com/ifscript/lootscript.
 # This notice is also found at the top of affected functions.
 
-import bs4
-import pandas as pd
-from pathlib import Path
-import re
-import sys
 import copy
-from typing import Optional
-import string
-import dateparser
 import datetime as dt
 import math
+import string
+import sys
+from pathlib import Path
+from typing import Optional
+
+import bs4
+import dateparser
+import pandas as pd
+import regex as re
+from .emojis import is_emoji
 
 # bs4 seems to recursively parse the html. Errors sometimes.
 sys.setrecursionlimit(10_000)
@@ -186,11 +188,9 @@ def construct_dataframe(
 
             word_count = get_amount_of_words(content_tag)
 
-            rules_compliance_check_result = check_rules_compliance(
-                content, word_count
-            )
-            is_rules_compliant = rules_compliance_check_result[0]
-            rulebreak_reasons = rules_compliance_check_result[1]
+            rules_compliance_check_result = rules_reworked(content)
+            is_rules_compliant = any(rules_compliance_check_result.values())
+            rulebreak_reasons = rules_compliance_check_result
 
             message_series = pd.Series(
                 data=(
@@ -456,7 +456,9 @@ def has_edited_message(message: bs4.element.Tag) -> bool:
 def check_rules_compliance(
     content: str, word_count_: int
 ) -> tuple[bool, list[Optional[str]]]:
-    """Checks if a post is compliant to the rules.
+    """
+    DEPRECATED - USE rules_reworked()
+    Checks if a post is compliant to the rules.
 
     Args:
         content (str): The cleaned up and stripped content string.
@@ -533,3 +535,55 @@ def _find_first_letter_index(string_: str):
         if char in string.ascii_letters:
             return string_.index(char)
     return None
+
+
+# Source: https://de.m.wikipedia.org/wiki/Satzzeichen
+PUNCTUATION = r".?!\"„“‚‘»«‹›,;:'’–—‐\-·/\()\[\]<>{}…☞‽¡¿⸘、"
+
+
+def rules_reworked(content: str) -> dict[str, bool]:
+    content = content.strip()  # Remove trailing and leading whitespaces
+
+    compliance = {
+        "word_count": True,
+        "first_letter": True,
+        "punctuation": True,
+    }
+
+    if not content:
+        return {
+            k: False for k in compliance.keys()
+        }
+
+    # Word count
+    # Using re.split() instead of str.split() as re supports all whitespaces
+    # out of the box.
+    word_count = len(re.split(
+        fr"[\s{PUNCTUATION}]",  # Split words by whitespace and punctuation
+        content,
+    ))
+    if word_count < 5:
+        compliance["word_count"] = False
+
+    # First Letter
+    # Get index of first letter
+    # This requires the third party regex module to work
+    # Therefore `import regex as re`
+    # This works with all Unicode letters, including äöü, ß and âáà.
+    first_letter_match = re.search('\\p{L}', content, re.UNICODE)
+    if (
+        first_letter_match is None  # No letter in content
+        or not first_letter_match.captures()[0].isupper()  # noqa  # letter not uppercase
+    ):
+        compliance["first_letter"] = False
+
+    # Punctuation
+    # Last forum emoji has already been replaced with a dot
+    last_char = content[-1]
+    if (
+        last_char not in PUNCTUATION
+        and not is_emoji(last_char)  # noqa
+    ):
+        compliance["punctuation"] = False
+
+    return compliance
