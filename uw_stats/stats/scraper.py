@@ -14,7 +14,7 @@ import bs4
 import dateparser
 import pandas as pd
 import regex as re
-from .emojis import is_emoji
+from emojis import is_emoji
 
 # bs4 seems to recursively parse the html. Errors sometimes.
 sys.setrecursionlimit(10_000)
