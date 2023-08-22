@@ -16,6 +16,7 @@ import pandas as pd
 import regex as re
 from emojis import is_emoji
 
+
 # bs4 seems to recursively parse the html. Errors sometimes.
 sys.setrecursionlimit(10_000)
 
@@ -189,8 +190,10 @@ def construct_dataframe(
             word_count = get_amount_of_words(content_tag)
 
             rules_compliance_check_result = rules_reworked(content)
-            is_rules_compliant = any(rules_compliance_check_result.values())
-            rulebreak_reasons = rules_compliance_check_result
+            rulebreak_reasons = [
+                k for k, v in rules_compliance_check_result.items() if not v
+            ]
+            is_rules_compliant = not rulebreak_reasons
 
             message_series = pd.Series(
                 data=(

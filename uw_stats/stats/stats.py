@@ -151,12 +151,12 @@ class DataVisualizer:
         table = table.strip()
         return table
 
-    def rule_violation_bbtable_50p(self) -> str:
+    def rule_violation_bbtable_np(self, n: int = 50) -> str:
         """
         <printable>
         Constructs a BBCode Table containing stats per author, sorted by
         rule violation percentage ascending. Only counts authors with at
-        least 50 messages in the specified range.
+        least n messages in the specified range.
 
         Args:
 
@@ -172,7 +172,7 @@ class DataVisualizer:
         )()
         for author in authors_sorted:
             messages = self.data_extractor.get_messages_from_author(author)
-            if messages < 50:
+            if messages < n:
                 continue
             rules_violating_messages = (
                 self.data_extractor.get_rule_violating_messages_from_author(

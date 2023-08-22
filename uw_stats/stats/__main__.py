@@ -1,8 +1,10 @@
 import argparse
-from pathlib import Path
-import stats
-import scraper
 import sys
+from pathlib import Path
+from typing import Any
+
+import scraper
+import stats
 
 
 def parse_range(rangestring: str) -> range:
@@ -74,6 +76,16 @@ if __name__ == "__main__":
              "*range flag is allowed.",
         dest="postrange",
     )
+    parser.add_argument(
+        "-fo",
+        "--format-options",
+        action="store",
+        type=str,
+        required=False,
+        help="Specify options to be passed to the visualization function. "
+             "Should have the format \"arg1:value1;arg2:value2:argN:valueN\".",
+        dest="format_options",
+    )
 
     args = parser.parse_args()
 
@@ -98,7 +110,19 @@ if __name__ == "__main__":
         sys.exit(1)
     visualizer = stats.DataVisualizer(data_extractor=stats.DataExtractor(df))  # type: ignore  # noqa
     method = getattr(visualizer, args.format)
-    visualization = method()
+    parameters: dict[str, Any] = {}
+    if args.format_options:
+        options = args.format_options.split(";")
+        for i in options:
+            if ":" not in i:
+                print("Invalid format options provided.")
+                sys.exit(1)
+            option: list[Any] = i.split(":")
+            if option[1].isdigit():
+                option[1] = int(option[1])
+            parameters[option[0]] = option[1]
+    print(parameters)
+    visualization = method(**parameters)
     if method.__doc__.strip().startswith("<printable>"):
         print(visualization)
     elif method.__doc__.startswith("<plot>"):
