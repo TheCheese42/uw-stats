@@ -1,7 +1,47 @@
 from pathlib import Path
 from threading import Thread
+from typing import Iterable
+import re
 
 import requests
+
+VERBOSE = True
+
+
+def set_verbose(value: bool = True):
+    global VERBOSE
+    VERBOSE = value
+
+
+def fetch_new_pages(
+    base_url: str, working_dir: Path | str = Path.cwd(), threaded: bool = True
+) -> None:
+    """Fetches only pages that aren't present yet. Useful for quickly updating
+    the underlying data. Updates the latest saved page as well.
+
+    Args:
+        base_url (str): The threads base url.
+        working_dir (Path | str, optional): The directory where files are
+        created. Defaults to Path.cwd().
+    """
+    working_dir = Path(working_dir)
+    try:
+        last_available_page_path = sorted(
+            [i for i in working_dir.iterdir() if i.is_file()]
+        )[-1]
+    except IndexError:
+        raise ValueError("Working dir is empty, use a different function for "
+                         "downloading all pages together.")
+    last_available_page = int(re.findall(
+        r"\d+", last_available_page_path.name)[0]
+    )
+    last_page = get_last_page(base_url)
+
+    fetch_and_save_pages_concurrently(
+        base_url=base_url,
+        pages=range(last_available_page, last_page + 1),
+        working_dir=working_dir,
+    )
 
 
 def fetch_and_save_all_pages_concurrently(
@@ -16,8 +56,26 @@ def fetch_and_save_all_pages_concurrently(
     """
     last_page = get_last_page(base_url)
 
+    fetch_and_save_pages_concurrently(
+        base_url=base_url,
+        pages=range(1, last_page + 1),
+        working_dir=working_dir,
+    )
+
+
+def fetch_and_save_pages_concurrently(
+    base_url: str, pages: Iterable, working_dir: Path | str = Path.cwd()
+) -> None:
+    """Fetches and saves specified pages of a thread concurrently.
+
+    Args:
+        base_url (str): The threads base url.
+        pages (Iterable): An iterable of pages to be fetched and saved.
+        working_dir (Path | str, optional): The directory where the files
+        are created. Defaults to Path.cwd().
+    """
     threads = []
-    for page in range(1, last_page + 1):
+    for page in pages:
         thread = Thread(
             target=fetch_and_save,
             name=f"UW-Stats fetch thread #{page}",
@@ -42,7 +100,25 @@ def fetch_and_save_all_pages_linearly(
     """
     last_page = get_last_page(base_url)
 
-    for page in range(1, last_page + 1):
+    fetch_and_save_pages_linearly(
+        base_url=base_url,
+        pages=range(1, last_page + 1),
+        working_dir=working_dir,
+    )
+
+
+def fetch_and_save_pages_linearly(
+    base_url: str, pages: Iterable, working_dir: Path | str = Path.cwd()
+) -> None:
+    """Fetches and saves certain pages of a thread linearly.
+
+    Args:
+        base_url (str): The threads base url.
+        pages (Iterable): An iterable of pages to be fetched and saved.
+        working_dir (Path | str, optional): The directory where the files
+        are created. Defaults to Path.cwd().
+    """
+    for page in pages:
         fetch_and_save(
             get_url_for_page(base_url, page), Path(working_dir), page
         )
@@ -58,7 +134,8 @@ def fetch_and_save(url: str, working_dir: Path, page_num: int) -> None:
     """
     html = fetch_page(url)
     save_page(html, working_dir, page_num)
-    print(f"Saved page {page_num}.")
+    if VERBOSE:
+        print(f"Saved page {page_num}.")
 
 
 def get_last_page(base_url: str, max: int = 1_000_000) -> int:
@@ -139,6 +216,6 @@ def save_page(html: str, working_dir: Path, page_num: int = 1) -> int:
         int: The amount of bytes written.
     """
     assert working_dir.is_dir(), "path arg must be a directory."
-    file_path = working_dir / f"page_{page_num}.html"
+    file_path = working_dir / f"page_{str(page_num).zfill(4)}.html"
     with open(file_path, mode="w", encoding="utf-8") as fp:
         return fp.write(html)

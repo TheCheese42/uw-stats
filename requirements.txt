@@ -2,3 +2,4 @@ beautifulsoup4
 matplotlib
 requests
 pandas
+dateparser
