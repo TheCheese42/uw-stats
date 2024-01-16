@@ -121,7 +121,6 @@ if __name__ == "__main__":
             if option[1].isdigit():
                 option[1] = int(option[1])
             parameters[option[0]] = option[1]
-    print(parameters)
     visualization = method(**parameters)
     if method.__doc__.strip().startswith("<printable>"):
         print(visualization)

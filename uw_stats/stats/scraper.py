@@ -16,6 +16,12 @@ import pandas as pd
 import regex as re
 from emojis import is_emoji
 
+WHITESPACES = r"\xad͏\u061cᅟᅠ឴឵\u180e\u2000\u2001\u2002\u2003\u2004\u2005"\
+              r"\u2006"\
+              r"\u2007\u2008\u2009\u200a\u200b\u200c\u200d\u200e\u200f \u205f"\
+              r"\u2060\u2061\u2062\u2063\u2064\u206a\u206b\u206c\u206d\u206e"\
+              r"\u206f\u3000\ufeff"\
+              r"\ufe0f\ufe0f"\
 
 # bs4 seems to recursively parse the html. Errors sometimes.
 sys.setrecursionlimit(10_000)
@@ -228,11 +234,7 @@ def construct_dataframe(
             get_last_post_from_page(pagerange[-1]) + 1,
         )
     elif postrange:
-        index = range(
-            postrange[0],
-            # +1 due to the range stop value being exclusive
-            postrange[-1] + 1,
-        )
+        index = postrange
     else:
         index = None
 
@@ -546,6 +548,7 @@ PUNCTUATION = r".?!\"„“‚‘»«‹›,;:'’–—‐\-·/\()\[\]<>{}…�
 
 def rules_reworked(content: str) -> dict[str, bool]:
     content = content.strip()  # Remove trailing and leading whitespaces
+    content = content.strip(WHITESPACES)  # Better list
 
     compliance = {
         "word_count": True,
